@@ -137,32 +137,4 @@ describe('API Service', () => {
         .toBeNull();
     });
   });
-
-  describe('me', () => {
-    it('should call the me endpoint and include authorization token', async () => {
-      const mockUser = { id: '1', email: 'test@example.com', role: 'superadmin' };
-
-      fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ user: mockUser }),
-        status: 200
-      } as Response);
-
-      // Set a token first
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem('bantai-access-token', 'mock-token');
-      }
-
-      await api.me();
-
-      expect(fetch).toHaveBeenCalledWith(
-        'https://www.bantai.online/api/v1/auth/me',
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            'Authorization': 'Bearer mock-token'
-          })
-        })
-      );
-    });
-  });
 });

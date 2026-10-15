@@ -23,11 +23,26 @@ function readStoredTheme(): Theme {
   }
 }
 
+// Helper to decode JWT token payload
+function decodeJwtToken(token: string): any | null {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    // Add padding if needed
+    const padded = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const decoded = atob(padded);
+    return JSON.parse(decoded);
+  } catch (err) {
+    console.warn('Failed to decode JWT token:', err);
+    return null;
+  }
+}
+
 type SessionValue = {
   user: UserAccount | null;
   ready: boolean;
-  signIn: (email: string, password: string) => Promise<UserAccount>;
-  devLogin: () => Promise<UserAccount>;
+  signIn: (email: string, password: string) => Promise<boolean>;
+  devLogin: () => Promise<boolean>;
   signOut: () => Promise<void>;
   theme: Theme;
   setTheme: (t: Theme) => void;
@@ -69,54 +84,116 @@ export function SessionProvider({ children }: {children: React.ReactNode;}) {
 
   useEffect(() => {
     let cancelled = false;
-    api
-      .me()
-      .then((data) => {
-        if (!cancelled) setUser(data.user);
-      })
-      .catch(() => {
-        if (!cancelled) setUser(null);
-      })
-      .finally(() => {
-        if (!cancelled) setReady(true);
-      });
+    // Check if we have a token and try to get user data from it
+    const tryInitializeUser = async () => {
+      if (typeof window !== 'undefined') {
+        const token = window.localStorage.getItem('bantai-access-token');
+        if (token) {
+          // Try to decode the token to get user data
+          const decoded = decodeJwtToken(token);
+          if (decoded && decoded.id && decoded.email && decoded.role && decoded.f_name && decoded.l_name) {
+            // Map the decoded token to our UserAccount type
+            const userData: UserAccount = {
+              id: decoded.id,
+              f_name: decoded.f_name,
+              l_name: decoded.l_name,
+              role: decoded.role,
+              email: decoded.email,
+              m_number: decoded.m_number || undefined,
+              command_center_id: decoded.command_center_id || null,
+              account_status: decoded.account_status || undefined,
+              must_change_password: decoded.must_change_password || undefined,
+              r_profile: decoded.r_profile || undefined,
+              d_profile: decoded.d_profile || undefined
+            };
+            if (!cancelled) setUser(userData);
+          }
+        }
+      }
+      if (!cancelled) setReady(true);
+    };
+
+    tryInitializeUser();
+
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const signIn = useCallback(async (email: string, password: string): Promise<UserAccount> => {
+  const signIn = useCallback(async (email: string, password: string): Promise<boolean> => {
     const trimmedEmail = email.trim().toLowerCase();
     const trimmedPassword = password.trim();
     if (!trimmedEmail || !trimmedPassword) {
-      throw new Error('Enter your email and password.');
+      return false;
     }
     try {
       const data = await api.login(trimmedEmail, trimmedPassword);
-      // The login API now returns {accessToken, refreshToken}
-      // The token is stored in localStorage by the api.request function
-      // Now fetch the user data
-      const userData = await api.me();
-      if (!cancelled) setUser(userData.user);
+      // Store the access token in localStorage for use in subsequent API requests
+      if (typeof window !== 'undefined' && data.accessToken) {
+        try {
+          window.localStorage.setItem('bantai-access-token', data.accessToken);
+          // Try to get user data from the token immediately
+          const decoded = decodeJwtToken(data.accessToken);
+          if (decoded && decoded.id && decoded.email && decoded.role && decoded.f_name && decoded.l_name) {
+            const userData: UserAccount = {
+              id: decoded.id,
+              f_name: decoded.f_name,
+              l_name: decoded.l_name,
+              role: decoded.role,
+              email: decoded.email,
+              m_number: decoded.m_number || undefined,
+              command_center_id: decoded.command_center_id || null,
+              account_status: decoded.account_status || undefined,
+              must_change_password: decoded.must_change_password || undefined,
+              r_profile: decoded.r_profile || undefined,
+              d_profile: decoded.d_profile || undefined
+            };
+            setUser(userData);
+          }
+        } catch (storageError) {
+          console.warn('Failed to store access token:', storageError);
+        }
+      }
       setBranchFilter('all');
-      return userData.user;
+      return true;
     } catch (error: any) {
-      // Re-throw the error so the calling component can handle it
-      throw error;
+      return false;
     }
   }, []);
 
-  const devLogin = useCallback(async (): Promise<UserAccount> => {
-    if (!import.meta.env.DEV) throw new Error('Development mode is disabled.');
+  const devLogin = useCallback(async (): Promise<boolean> => {
+    if (!import.meta.env.DEV) return false;
     try {
       const data = await api.devLogin();
-      // Fetch user data after dev login as well
-      const userData = await api.me();
-      if (!cancelled) setUser(userData.user);
+      if (typeof window !== 'undefined' && data.accessToken) {
+        try {
+          window.localStorage.setItem('bantai-access-token', data.accessToken);
+          // Try to get user data from the token
+          const decoded = decodeJwtToken(data.accessToken);
+          if (decoded && decoded.id && decoded.email && decoded.role && decoded.f_name && decoded.l_name) {
+            const userData: UserAccount = {
+              id: decoded.id,
+              f_name: decoded.f_name,
+              l_name: decoded.l_name,
+              role: decoded.role,
+              email: decoded.email,
+              m_number: decoded.m_number || undefined,
+              command_center_id: decoded.command_center_id || null,
+              account_status: decoded.account_status || undefined,
+              must_change_password: decoded.must_change_password || undefined,
+              r_profile: decoded.r_profile || undefined,
+              d_profile: decoded.d_profile || undefined
+            };
+            setUser(userData);
+          }
+        } catch (storageError) {
+          console.warn('Failed to store access token:', storageError);
+        }
+      }
       setBranchFilter('all');
-      return userData.user;
-    } catch (error: any) {
-      throw error;
+      return true;
+    } catch {
+      return false;
     }
   }, []);
 
